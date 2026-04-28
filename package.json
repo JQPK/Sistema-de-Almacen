@@ -1,0 +1,25 @@
+{
+  "name": "joyeria-marine",
+  "version": "1.0.0",
+  "description": "Sistema de Punto de Venta - Joyería Mariné",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "pos",
+    "joyeria",
+    "punto-de-venta"
+  ],
+  "author": "Joyería Mariné",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "csv-parse": "^6.2.1",
+    "electron": "^36.0.0",
+    "jsbarcode": "^3.12.3",
+    "sql.js": "^1.14.1"
+  }
+}
