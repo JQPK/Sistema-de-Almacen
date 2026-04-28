@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "build": "electron-builder --win",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -15,11 +16,49 @@
   "author": "Joyería Mariné",
   "license": "UNLICENSED",
   "type": "commonjs",
+  "build": {
+    "appId": "com.marine.pos",
+    "productName": "Joyería Mariné POS",
+    "copyright": "© 2026 Joyería Mariné",
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "src/assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "src/assets/icon.ico",
+      "uninstallerIcon": "src/assets/icon.ico",
+      "installerHeaderIcon": "src/assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Joyería Mariné POS"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "node_modules/**/*",
+      "!node_modules/electron/**/*",
+      "!**/*.map"
+    ],
+    "extraResources": [
+      { "from": "database", "to": "database", "filter": ["**/*"] }
+    ],
+    "directories": {
+      "output": "dist"
+    }
+  },
   "dependencies": {
     "chart.js": "^4.5.1",
     "csv-parse": "^6.2.1",
     "electron": "^36.0.0",
     "jsbarcode": "^3.12.3",
     "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "electron-builder": "^25.1.8"
   }
 }

@@ -84,4 +84,11 @@ contextBridge.exposeInMainWorld('api', {
   backup: {
     create: () => ipcRenderer.invoke('backup:create'),
   },
+
+  // Licencia
+  license: {
+    check: () => ipcRenderer.invoke('license:check'),
+    getMachineId: () => ipcRenderer.invoke('license:getMachineId'),
+    activate: (code, clientName) => ipcRenderer.invoke('license:activate', code, clientName),
+  },
 });

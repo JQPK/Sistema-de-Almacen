@@ -14,7 +14,60 @@ const app = {
   // ── Initialize ─────────────────────────
   async init() {
     this.setupWindowControls();
-    await this.setupAuth();
+    await this.checkLicense();
+  },
+
+  // ── License Check ───────────────────────
+  async checkLicense() {
+    const result = await window.api.license.check();
+    if (result.valid) {
+      await this.setupAuth();
+    } else {
+      await this.showActivationScreen();
+    }
+  },
+
+  async showActivationScreen() {
+    const machineId = await window.api.license.getMachineId();
+    document.getElementById('activation-machine-id').value = machineId;
+    document.getElementById('screen-activation').style.display = 'flex';
+
+    // Auto-format code input as XXXX-XXXX-XXXX-XXXX
+    const codeInput = document.getElementById('activation-code');
+    codeInput.addEventListener('input', (e) => {
+      let val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      if (val.length > 4)  val = val.slice(0,4)  + '-' + val.slice(4);
+      if (val.length > 9)  val = val.slice(0,9)  + '-' + val.slice(9);
+      if (val.length > 14) val = val.slice(0,14) + '-' + val.slice(14);
+      e.target.value = val.slice(0, 19);
+    });
+
+    document.getElementById('btn-activate').addEventListener('click', async () => {
+      const code = document.getElementById('activation-code').value.trim();
+      const errorEl = document.getElementById('activation-error');
+
+      if (code.length < 19) {
+        errorEl.textContent = 'Ingresa el código completo (XXXX-XXXX-XXXX-XXXX)';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      const res = await window.api.license.activate(code);
+      if (res.success) {
+        document.getElementById('screen-activation').style.display = 'none';
+        await this.setupAuth();
+      } else {
+        errorEl.textContent = res.message;
+        errorEl.style.display = 'block';
+      }
+    });
+  },
+
+  copyMachineId() {
+    const val = document.getElementById('activation-machine-id').value;
+    navigator.clipboard.writeText(val).then(() => {
+      this.toast('ID copiado al portapapeles', 'success');
+    });
   },
 
   async startApp() {

@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const Database = require('./src/database/db');
+const { checkLicense, validateLicenseCode, saveLicense, getMachineId } = require('./src/license/license');
 
 let mainWindow;
 let db;
@@ -159,6 +160,17 @@ app.whenReady().then(async () => {
       return db.createBackup(result.filePath);
     }
     return { success: false, message: 'Cancelado' };
+  });
+
+  // ── Licencia ──
+  ipcMain.handle('license:check', () => checkLicense());
+  ipcMain.handle('license:getMachineId', () => getMachineId());
+  ipcMain.handle('license:activate', (_, code, clientName) => {
+    if (!validateLicenseCode(code)) {
+      return { success: false, message: 'Código de licencia inválido para este dispositivo' };
+    }
+    saveLicense(code, clientName);
+    return { success: true };
   });
 
   app.on('activate', () => {
