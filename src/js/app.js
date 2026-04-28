@@ -9,12 +9,36 @@ const app = {
   currentDocType: 'boleta',
   config: null,
   selectedProductIds: new Set(),
+  currentUser: null,
 
   // ── Initialize ─────────────────────────
   async init() {
     this.setupWindowControls();
-    this.setupNavigation();
+    await this.setupAuth();
+  },
+
+  async startApp() {
     this.config = await window.api.config.get();
+    
+    // Hide login/setup and show main app
+    document.getElementById('screen-login').style.display = 'none';
+    document.getElementById('screen-setup').style.display = 'none';
+    document.getElementById('app-container').style.display = 'flex';
+    
+    // Update Sidebar User Info
+    document.getElementById('sidebar-user-avatar').textContent = this.currentUser.nombre.charAt(0).toUpperCase();
+    document.getElementById('sidebar-user-name').textContent = this.currentUser.nombre;
+    document.getElementById('sidebar-user-role').textContent = this.currentUser.rol === 'admin' ? 'Administrador' : 'Cajero';
+    
+    // Role-based UI logic
+    if (this.currentUser.rol !== 'admin') {
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+    } else {
+      document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'flex');
+    }
+
+    // Setup rest of app
+    this.setupNavigation();
     await this.loadDashboard();
     this.setupProductsPage();
     this.setupPOS();
@@ -23,6 +47,109 @@ const app = {
     this.setupComprobantes();
     this.setupClientes();
     this.setupReportes();
+    this.setupUsuarios();
+    
+    window.api.actividad.log(this.currentUser.id, 'login', 'Inició sesión en el sistema');
+  },
+
+  // ═══════════════════════════════════════
+  //  AUTHENTICATION
+  // ═══════════════════════════════════════
+  async setupAuth() {
+    const hasUsers = await window.api.usuarios.hasUsers();
+    
+    if (!hasUsers) {
+      document.getElementById('screen-setup').style.display = 'flex';
+    } else {
+      document.getElementById('screen-login').style.display = 'flex';
+    }
+
+    // Setup Admin Creation
+    document.getElementById('btn-setup-create').addEventListener('click', async () => {
+      const nombre = document.getElementById('setup-nombre').value.trim();
+      const username = document.getElementById('setup-username').value.trim();
+      const password = document.getElementById('setup-password').value;
+      const passwordConfirm = document.getElementById('setup-password2').value;
+      const errorEl = document.getElementById('setup-error');
+
+      if (!nombre || !username || !password) {
+        errorEl.textContent = 'Todos los campos son obligatorios';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (password.length < 4) {
+        errorEl.textContent = 'La contraseña debe tener al menos 4 caracteres';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (password !== passwordConfirm) {
+        errorEl.textContent = 'Las contraseñas no coinciden';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      const res = await window.api.usuarios.create({ nombre, username, password, rol: 'admin' });
+      if (res.success) {
+        this.currentUser = { id: res.id, nombre, username, rol: 'admin' };
+        this.startApp();
+      } else {
+        errorEl.textContent = res.message;
+        errorEl.style.display = 'block';
+      }
+    });
+
+    // Setup Login
+    const doLogin = async () => {
+      const username = document.getElementById('login-username').value.trim();
+      const password = document.getElementById('login-password').value;
+      const errorEl = document.getElementById('login-error');
+
+      if (!username || !password) {
+        errorEl.textContent = 'Ingresa usuario y contraseña';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      const res = await window.api.usuarios.authenticate(username, password);
+      if (res.success) {
+        this.currentUser = res.user;
+        this.startApp();
+      } else {
+        errorEl.textContent = res.message;
+        errorEl.style.display = 'block';
+      }
+    };
+
+    document.getElementById('btn-login').addEventListener('click', doLogin);
+    document.getElementById('login-password').addEventListener('keyup', (e) => {
+      if (e.key === 'Enter') doLogin();
+    });
+
+    // Logout
+    document.getElementById('btn-logout').addEventListener('click', () => {
+      if (!confirm('¿Estás seguro de que deseas cerrar sesión?')) return;
+      window.api.actividad.log(this.currentUser.id, 'logout', 'Cerró sesión');
+      this.currentUser = null;
+
+      // Cerrar todos los modales que puedan estar abiertos
+      document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active'));
+
+      // Ocultar app y mostrar login
+      document.getElementById('app-container').style.display = 'none';
+
+      // Limpiar campos del login
+      document.getElementById('login-username').value = '';
+      document.getElementById('login-password').value = '';
+      document.getElementById('login-error').style.display = 'none';
+
+      // Mostrar pantalla de login
+      document.getElementById('screen-login').style.display = 'flex';
+
+      // Forzar foco en el campo usuario
+      setTimeout(() => {
+        document.getElementById('login-username').focus();
+      }, 100);
+    });
   },
 
   // ═══════════════════════════════════════
@@ -64,6 +191,8 @@ const app = {
     if (page === 'configuracion') this.loadSettings();
     if (page === 'clientes') this.loadClientes();
     if (page === 'reportes') this.loadReportes();
+    if (page === 'usuarios') this.loadUsuarios();
+    if (page === 'bitacora') this.loadBitacora();
   },
 
   // ═══════════════════════════════════════
@@ -544,9 +673,11 @@ const app = {
     try {
       if (id) {
         await window.api.productos.update(parseInt(id), data);
+        window.api.actividad.log(this.currentUser.id, 'producto_editado', `Editó el producto ${data.nombre}`);
         this.toast('Producto actualizado correctamente');
       } else {
         await window.api.productos.create(data);
+        window.api.actividad.log(this.currentUser.id, 'producto_creado', `Creó el producto ${data.nombre}`);
         this.toast('Producto creado correctamente');
       }
 
@@ -562,6 +693,7 @@ const app = {
 
     try {
       await window.api.productos.delete(id);
+      window.api.actividad.log(this.currentUser.id, 'producto_eliminado', `Eliminó el producto ${nombre}`);
       this.toast('Producto eliminado correctamente');
       this.loadProducts();
     } catch (e) {
@@ -891,6 +1023,7 @@ const app = {
     try {
       const result = await window.api.ventas.create(saleData);
       if (result.success) {
+        window.api.actividad.log(this.currentUser.id, 'venta_creada', `Venta registrada: ${result.numero_comprobante} por S/ ${total.toFixed(2)}`);
         this.closeModal('modal-checkout');
         this.toast(`Venta ${result.numero_comprobante} registrada exitosamente`, 'success');
 
@@ -921,7 +1054,8 @@ const app = {
 
       const result = await window.api.ventas.void(parseInt(id), motivo);
       if (result.success) {
-        this.toast('Comprobante anulado correctamente');
+        window.api.actividad.log(this.currentUser.id, 'venta_anulada', `Venta ID ${id} anulada. Motivo: ${motivo}`);
+        this.toast('Comprobante anulado exitosamente');
         this.closeModal('modal-void');
         this.loadComprobantes();
       } else {
@@ -1309,9 +1443,11 @@ const app = {
     try {
       if (id) {
         await window.api.clientes.update(id, data);
+        window.api.actividad.log(this.currentUser.id, 'cliente_editado', `Editó al cliente ${data.nombre}`);
         this.toast('Cliente actualizado exitosamente');
       } else {
         await window.api.clientes.create(data);
+        window.api.actividad.log(this.currentUser.id, 'cliente_creado', `Creó al cliente ${data.nombre}`);
         this.toast('Cliente creado exitosamente');
       }
       this.closeModal('modal-client');
@@ -1413,21 +1549,134 @@ const app = {
       },
       options: { responsive: true, maintainAspectRatio: false }
     });
-
-    if (window.chartReportCount) window.chartReportCount.destroy();
-    window.chartReportCount = new Chart(document.getElementById('chart-report-transacciones'), {
-      type: 'bar',
-      data: {
-        labels: days.map(d => d.label),
-        datasets: [{
-          label: 'Transacciones',
-          data: days.map(d => d.count),
-          backgroundColor: '#81B29A',
-        }]
-      },
-      options: { responsive: true, maintainAspectRatio: false }
-    });
   },
+
+  // ═══════════════════════════════════════
+  //  USUARIOS
+  // ═══════════════════════════════════════
+  setupUsuarios() {
+    document.getElementById('btn-save-usuario').addEventListener('click', () => this.saveUsuario());
+  },
+
+  async loadUsuarios() {
+    const usuarios = await window.api.usuarios.getAll();
+    const tbody = document.getElementById('usuarios-tbody');
+    
+    if (usuarios.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><p>No hay usuarios registrados</p></div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = usuarios.map(u => `
+      <tr>
+        <td class="fw-600">${u.nombre}</td>
+        <td><span class="font-mono text-muted">${u.username}</span></td>
+        <td><span class="badge ${u.rol === 'admin' ? 'badge-gold' : 'badge-danger'}">${u.rol.toUpperCase()}</span></td>
+        <td><span class="badge ${u.activo ? 'badge-success' : 'badge-danger'}">${u.activo ? 'Activo' : 'Inactivo'}</span></td>
+        <td class="text-muted" style="font-size:12px;">${this.formatDateTime(u.created_at)}</td>
+        <td>
+          <div class="flex gap-8">
+            <button class="btn btn-ghost btn-icon btn-sm" title="Editar" onclick="app.editUsuario(${u.id}, '${u.nombre.replace(/'/g, "\\'")}', '${u.username}', '${u.rol}')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            ${u.id !== this.currentUser.id ? `
+            <button class="btn btn-ghost btn-icon btn-sm" title="${u.activo ? 'Desactivar' : 'Activar'}" onclick="app.toggleUsuario(${u.id})">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+            </button>
+            ` : ''}
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  },
+
+  openUserModal() {
+    document.getElementById('modal-usuario-title').textContent = 'Nuevo Usuario';
+    document.getElementById('usuario-id').value = '';
+    document.getElementById('usuario-nombre').value = '';
+    document.getElementById('usuario-username').value = '';
+    document.getElementById('usuario-rol').value = 'cajero';
+    document.getElementById('usuario-password').value = '';
+    document.getElementById('usuario-pwd-req').style.display = 'inline';
+    document.getElementById('usuario-pwd-hint').style.display = 'none';
+    this.openModal('modal-usuario');
+  },
+
+  editUsuario(id, nombre, username, rol) {
+    document.getElementById('modal-usuario-title').textContent = 'Editar Usuario';
+    document.getElementById('usuario-id').value = id;
+    document.getElementById('usuario-nombre').value = nombre;
+    document.getElementById('usuario-username').value = username;
+    document.getElementById('usuario-rol').value = rol;
+    document.getElementById('usuario-password').value = '';
+    document.getElementById('usuario-pwd-req').style.display = 'none';
+    document.getElementById('usuario-pwd-hint').style.display = 'block';
+    this.openModal('modal-usuario');
+  },
+
+  async saveUsuario() {
+    const id = document.getElementById('usuario-id').value;
+    const nombre = document.getElementById('usuario-nombre').value.trim();
+    const username = document.getElementById('usuario-username').value.trim();
+    const rol = document.getElementById('usuario-rol').value;
+    const password = document.getElementById('usuario-password').value;
+
+    if (!nombre || !username) return this.toast('Nombre y usuario son obligatorios', 'error');
+    if (!id && password.length < 4) return this.toast('La contraseña debe tener al menos 4 caracteres', 'error');
+
+    const data = { nombre, username, rol };
+    if (password) data.password = password;
+
+    let res;
+    if (id) {
+      res = await window.api.usuarios.update(parseInt(id), data);
+      if (res.success) window.api.actividad.log(this.currentUser.id, 'usuario_editado', `Editó al usuario ${username}`);
+    } else {
+      res = await window.api.usuarios.create(data);
+      if (res.success) window.api.actividad.log(this.currentUser.id, 'usuario_creado', `Creó al usuario ${username}`);
+    }
+
+    if (res.success) {
+      this.toast(id ? 'Usuario actualizado' : 'Usuario creado', 'success');
+      this.closeModal('modal-usuario');
+      this.loadUsuarios();
+    } else {
+      this.toast(res.message, 'error');
+    }
+  },
+
+  async toggleUsuario(id) {
+    if (!confirm('¿Cambiar estado de este usuario?')) return;
+    const res = await window.api.usuarios.toggle(id);
+    if (res.success) {
+      this.toast(res.activo ? 'Usuario activado' : 'Usuario desactivado');
+      window.api.actividad.log(this.currentUser.id, 'usuario_estado', `Cambió estado del usuario ID ${id}`);
+      this.loadUsuarios();
+    }
+  },
+
+  // ═══════════════════════════════════════
+  //  BITÁCORA
+  // ═══════════════════════════════════════
+  async loadBitacora() {
+    const bitacora = await window.api.actividad.getAll({});
+    const tbody = document.getElementById('bitacora-tbody');
+    
+    if (bitacora.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><p>No hay registros de actividad</p></div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = bitacora.map(b => `
+      <tr>
+        <td class="text-muted" style="font-size:12px;">${this.formatDateTime(b.fecha)}</td>
+        <td class="fw-600">${b.usuario_nombre}</td>
+        <td><span class="badge ${b.usuario_rol === 'admin' ? 'badge-gold' : 'badge-danger'}">${b.usuario_rol.toUpperCase()}</span></td>
+        <td><span class="font-mono" style="background:#e8d5b7;padding:2px 6px;border-radius:4px;font-size:11px;">${b.accion}</span></td>
+        <td class="text-muted" style="font-size:13px;">${b.detalles || '-'}</td>
+      </tr>
+    `).join('');
+  }
 };
 
 // ── Boot ──

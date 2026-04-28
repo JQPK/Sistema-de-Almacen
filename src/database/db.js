@@ -779,7 +779,7 @@ class Database {
       const result = this.db.prepare(
         'INSERT INTO usuarios (nombre, username, password_hash, rol) VALUES (?, ?, ?, ?)'
       ).run(data.nombre, data.username.toLowerCase().trim(), hash, data.rol || 'cajero');
-      this.save();
+      this.db.save();
       return { success: true, id: result.lastInsertRowid };
     } catch (e) {
       if (e.message && e.message.includes('UNIQUE')) {
@@ -822,7 +822,7 @@ class Database {
           'UPDATE usuarios SET nombre = ?, username = ?, rol = ? WHERE id = ?'
         ).run(data.nombre, data.username.toLowerCase().trim(), data.rol, id);
       }
-      this.save();
+      this.db.save();
       return { success: true };
     } catch (e) {
       return { success: false, message: e.message };
@@ -834,7 +834,7 @@ class Database {
     if (!user) return { success: false, message: 'Usuario no encontrado' };
     const newState = user.activo ? 0 : 1;
     this.db.prepare('UPDATE usuarios SET activo = ? WHERE id = ?').run(newState, id);
-    this.save();
+    this.db.save();
     return { success: true, activo: newState };
   }
 
@@ -846,7 +846,7 @@ class Database {
     this.db.prepare(
       'INSERT INTO actividad_usuarios (usuario_id, accion, detalles) VALUES (?, ?, ?)'
     ).run(userId, accion, detalles);
-    this.save();
+    this.db.save();
   }
 
   getActivityLog(filters = {}) {
