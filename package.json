@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --testPathPattern=tests/"
   },
   "keywords": [
     "pos",
@@ -22,7 +22,12 @@
     "copyright": "© 2026 Joyería Mariné",
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "src/assets/icon.ico"
     },
@@ -45,7 +50,13 @@
       "!**/*.map"
     ],
     "extraResources": [
-      { "from": "database", "to": "database", "filter": ["**/*"] }
+      {
+        "from": "database",
+        "to": "database",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "directories": {
       "output": "dist"
@@ -59,6 +70,11 @@
     "sql.js": "^1.14.1"
   },
   "devDependencies": {
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "fast-check": "^3.22.0",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
   }
 }

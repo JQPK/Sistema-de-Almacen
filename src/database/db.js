@@ -258,6 +258,29 @@ class Database {
         FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
       );
     `);
+
+    // Migración segura: agregar usuario_id a ventas si no existe
+    try {
+      this.db.exec('ALTER TABLE ventas ADD COLUMN usuario_id INTEGER REFERENCES usuarios(id)');
+    } catch (e) {
+      if (!e.message || !e.message.includes('duplicate column name')) {
+        throw e;
+      }
+    }
+
+    // Tabla de movimientos de caja
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS movimientos_caja (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo TEXT NOT NULL CHECK(tipo IN ('ingreso', 'egreso')),
+        concepto TEXT NOT NULL,
+        monto REAL NOT NULL,
+        notas TEXT,
+        usuario_id INTEGER NOT NULL,
+        fecha TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+      );
+    `);
   }
 
   _seedDefaults() {
@@ -454,6 +477,10 @@ class Database {
     return { success: true };
   }
 
+  getCategoryByName(nombre) {
+    return this.db.prepare('SELECT * FROM categorias WHERE LOWER(nombre) = LOWER(?) AND activo = 1').get(nombre);
+  }
+
   // ═══════════════════════════════════════
   //  MATERIALES
   // ═══════════════════════════════════════
@@ -489,6 +516,10 @@ class Database {
     return { success: true };
   }
 
+  getMaterialByName(nombre) {
+    return this.db.prepare('SELECT * FROM materiales WHERE LOWER(nombre) = LOWER(?) AND activo = 1').get(nombre);
+  }
+
   // ═══════════════════════════════════════
   //  VENTAS
   // ═══════════════════════════════════════
@@ -515,13 +546,14 @@ class Database {
       // Insert sale
       const saleResult = this.db.prepare(`
         INSERT INTO ventas (numero_comprobante, tipo_comprobante, cliente_id, subtotal, descuento, total,
-          metodo_pago, monto_pagado, cambio, notas)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          metodo_pago, monto_pagado, cambio, notas, usuario_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         numero, data.tipo_comprobante || 'boleta',
         data.cliente_id || null, data.subtotal, data.descuento || 0,
         data.total, data.metodo_pago || 'efectivo',
-        data.monto_pagado || data.total, data.cambio || 0, data.notas || ''
+        data.monto_pagado || data.total, data.cambio || 0, data.notas || '',
+        data.usuario_id || null
       );
 
       const ventaId = saleResult.lastInsertRowid;
@@ -539,6 +571,14 @@ class Database {
         updateStock.run(item.cantidad, item.producto_id);
       }
 
+      // Registrar ingreso en caja si hay usuario_id
+      if (data.usuario_id) {
+        this.db.prepare(`
+          INSERT INTO movimientos_caja (tipo, concepto, monto, usuario_id)
+          VALUES ('ingreso', ?, ?, ?)
+        `).run(`Venta ${numero}`, data.total, data.usuario_id);
+      }
+
       return {
         success: true,
         venta_id: ventaId,
@@ -551,9 +591,11 @@ class Database {
 
   getSales(filters = {}) {
     let query = `
-      SELECT v.*, c.nombre as cliente_nombre, c.dni_ruc as cliente_dni_ruc
+      SELECT v.*, c.nombre as cliente_nombre, c.dni_ruc as cliente_dni_ruc,
+             u.nombre as vendedor_nombre
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
+      LEFT JOIN usuarios u ON v.usuario_id = u.id
       WHERE 1=1
     `;
     const params = [];
@@ -586,9 +628,11 @@ class Database {
   getSaleById(id) {
     const venta = this.db.prepare(`
       SELECT v.*, c.nombre as cliente_nombre, c.dni_ruc as cliente_dni_ruc,
-             c.telefono as cliente_telefono, c.direccion as cliente_direccion
+             c.telefono as cliente_telefono, c.direccion as cliente_direccion,
+             u.nombre as vendedor_nombre
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
+      LEFT JOIN usuarios u ON v.usuario_id = u.id
       WHERE v.id = ?
     `).get(id);
 
@@ -647,7 +691,19 @@ class Database {
     return stats;
   }
 
-  getDailyStats() {
+  getDailyStats(fechaInicio = null, fechaFin = null) {
+    if (fechaInicio && fechaFin) {
+      return this.db.prepare(`
+        SELECT
+          date(fecha) as dia,
+          SUM(CASE WHEN estado = 'completada' THEN total ELSE 0 END) as total,
+          COUNT(CASE WHEN estado = 'completada' THEN 1 END) as num_ventas
+        FROM ventas
+        WHERE fecha >= ? AND fecha <= ?
+        GROUP BY date(fecha)
+        ORDER BY dia ASC
+      `).all(fechaInicio, fechaFin + ' 23:59:59');
+    }
     return this.db.prepare(`
       SELECT
         date(fecha) as dia,
@@ -903,6 +959,108 @@ class Database {
       console.error('Error in auto backup', e);
       return { success: false };
     }
+  }
+
+  // INVENTARIO
+
+  getInventoryProducts() {
+    return this.db.prepare(`
+      SELECT p.*, c.nombre as categoria_nombre, m.nombre as material_nombre
+      FROM productos p
+      LEFT JOIN categorias c ON p.categoria_id = c.id
+      LEFT JOIN materiales m ON p.material_id = m.id
+      WHERE p.activo = 1
+      ORDER BY p.nombre ASC
+    `).all();
+  }
+
+  getTopSellingProducts(limit = 10, fechaInicio = null, fechaFin = null) {
+    if (fechaInicio && fechaFin) {
+      return this.db.prepare(`
+        SELECT p.id, p.nombre, p.codigo, p.stock_actual, SUM(dv.cantidad) as total_vendido
+        FROM productos p
+        JOIN detalle_ventas dv ON p.id = dv.producto_id
+        JOIN ventas v ON dv.venta_id = v.id
+        WHERE v.estado = 'completada' AND v.fecha >= ? AND v.fecha <= ?
+        GROUP BY p.id ORDER BY total_vendido DESC LIMIT ?
+      `).all(fechaInicio, fechaFin + ' 23:59:59', limit);
+    }
+    return this.db.prepare(`
+      SELECT p.id, p.nombre, p.codigo, p.stock_actual, SUM(dv.cantidad) as total_vendido
+      FROM productos p
+      JOIN detalle_ventas dv ON p.id = dv.producto_id
+      JOIN ventas v ON dv.venta_id = v.id
+      WHERE v.estado = 'completada'
+      GROUP BY p.id ORDER BY total_vendido DESC LIMIT ?
+    `).all(limit);
+  }
+
+  getLowRotationProducts(limit = 10, days = 90) {
+    return this.db.prepare(`
+      SELECT p.id, p.nombre, p.codigo, p.stock_actual, COALESCE(SUM(dv.cantidad), 0) as total_vendido
+      FROM productos p
+      LEFT JOIN detalle_ventas dv ON p.id = dv.producto_id
+      LEFT JOIN ventas v ON dv.venta_id = v.id AND v.estado = 'completada'
+        AND v.fecha >= datetime('now','localtime','-' || ? || ' days')
+      WHERE p.activo = 1
+      GROUP BY p.id ORDER BY total_vendido ASC LIMIT ?
+    `).all(days, limit);
+  }
+
+  getInventoryStats() {
+    return this.db.prepare(`
+      SELECT 
+        COUNT(*) as total_productos,
+        COALESCE(SUM(stock_actual), 0) as total_unidades,
+        COALESCE(SUM(stock_actual * precio_compra), 0) as valor_compra,
+        COALESCE(SUM(stock_actual * precio_venta), 0) as valor_venta
+      FROM productos WHERE activo = 1
+    `).get();
+  }
+
+  // ═══════════════════════════════════════
+  //  CAJA
+  // ═══════════════════════════════════════
+
+  createMovimientoCaja(data) {
+    if (!data.monto || data.monto <= 0) throw new Error('El monto debe ser mayor a 0');
+    const result = this.db.prepare(`
+      INSERT INTO movimientos_caja (tipo, concepto, monto, notas, usuario_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(data.tipo, data.concepto, data.monto, data.notas || '', data.usuario_id);
+    return { success: true, id: result.lastInsertRowid };
+  }
+
+  getMovimientosCaja(filters = {}) {
+    let query = `
+      SELECT m.*, u.nombre as usuario_nombre
+      FROM movimientos_caja m
+      LEFT JOIN usuarios u ON m.usuario_id = u.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (filters.fecha_inicio) { query += ' AND m.fecha >= ?'; params.push(filters.fecha_inicio); }
+    if (filters.fecha_fin) { query += ' AND m.fecha <= ?'; params.push(filters.fecha_fin + ' 23:59:59'); }
+    if (filters.tipo) { query += ' AND m.tipo = ?'; params.push(filters.tipo); }
+    query += ' ORDER BY m.fecha DESC LIMIT 200';
+    return this.db.prepare(query).all(...params);
+  }
+
+  getCajaResumen(fechaInicio = null, fechaFin = null) {
+    let whereClause = '1=1';
+    const params = [];
+    if (fechaInicio) { whereClause += ' AND fecha >= ?'; params.push(fechaInicio); }
+    if (fechaFin) { whereClause += ' AND fecha <= ?'; params.push(fechaFin + ' 23:59:59'); }
+
+    const result = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE 0 END), 0) as total_ingresos,
+        COALESCE(SUM(CASE WHEN tipo = 'egreso' THEN monto ELSE 0 END), 0) as total_egresos
+      FROM movimientos_caja WHERE ${whereClause}
+    `).get(...params);
+
+    result.saldo_neto = result.total_ingresos - result.total_egresos;
+    return result;
   }
 
   close() {

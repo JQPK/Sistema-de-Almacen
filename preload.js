@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld('api', {
     getById: (id) => ipcRenderer.invoke('ventas:getById', id),
     void: (id, motivo) => ipcRenderer.invoke('ventas:void', id, motivo),
     getStats: (period) => ipcRenderer.invoke('ventas:getStats', period),
-    getDailyStats: () => ipcRenderer.invoke('ventas:getDailyStats'),
+    getDailyStats: (fechaInicio, fechaFin) => ipcRenderer.invoke('ventas:getDailyStats', fechaInicio, fechaFin),
   },
 
   // Clientes
@@ -83,6 +83,21 @@ contextBridge.exposeInMainWorld('api', {
   // Backup
   backup: {
     create: () => ipcRenderer.invoke('backup:create'),
+  },
+
+  // Inventario
+  inventario: {
+    getProducts: () => ipcRenderer.invoke('inventario:getProducts'),
+    getTopSelling: (limit, fi, ff) => ipcRenderer.invoke('inventario:getTopSelling', limit, fi, ff),
+    getLowRotation: (limit, days) => ipcRenderer.invoke('inventario:getLowRotation', limit, days),
+    getStats: () => ipcRenderer.invoke('inventario:getStats'),
+  },
+
+  // Caja
+  caja: {
+    create: (data) => ipcRenderer.invoke('caja:create', data),
+    getAll: (filters) => ipcRenderer.invoke('caja:getAll', filters),
+    getResumen: (fi, ff) => ipcRenderer.invoke('caja:getResumen', fi, ff),
   },
 
   // Licencia

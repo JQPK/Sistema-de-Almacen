@@ -183,6 +183,18 @@
           </svg>
           Reportes
         </button>
+        <button class="nav-item admin-only" data-page="inventario">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M3 3h18v18H3z"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+          </svg>
+          Inventario
+        </button>
+        <button class="nav-item admin-only" data-page="caja">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+            <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>
+          </svg>
+          Caja
+        </button>
 
         <div class="nav-section-label">Sistema</div>
         <button class="nav-item" data-page="configuracion">
@@ -517,6 +529,25 @@
           </div>
         </div>
         
+        <!-- Filtro de fechas -->
+        <div class="card mb-16" style="padding: 16px 20px;">
+          <div class="flex items-center gap-16" style="flex-wrap: wrap; align-items: flex-end;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label style="font-size:11px;">Fecha Inicio</label>
+              <input type="date" class="form-control" id="report-fecha-inicio">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label style="font-size:11px;">Fecha Fin</label>
+              <input type="date" class="form-control" id="report-fecha-fin">
+            </div>
+            <button class="btn btn-secondary" id="btn-filter-reports">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              Filtrar
+            </button>
+            <span id="report-date-range-label" style="font-size:12px; color:var(--text-tertiary); margin-left:4px;"></span>
+          </div>
+        </div>
+
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
           <div class="card">
             <div class="card-header"><span class="card-title">Ventas de los Últimos 7 Días</span></div>
@@ -574,6 +605,7 @@
                 <th>Tipo</th>
                 <th>Fecha</th>
                 <th>Cliente</th>
+                <th>Vendedor</th>
                 <th>Total</th>
                 <th>Método</th>
                 <th>Estado</th>
@@ -584,6 +616,147 @@
               <!-- Filled by JS -->
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- ═══════════ INVENTARIO ═══════════ -->
+      <div id="page-inventario" class="page">
+        <div class="page-header">
+          <div>
+            <h1>Inventario</h1>
+            <p>Control de existencias y estadísticas de productos</p>
+          </div>
+          <button class="btn btn-secondary" id="btn-print-inventory">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            Imprimir Inventario
+          </button>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid" id="inventory-stats" style="margin-bottom:20px;">
+          <div class="stat-card">
+            <div class="stat-icon gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg></div>
+            <div class="stat-info"><h3 id="inv-stat-productos">0</h3><p>Productos Activos</p></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+            <div class="stat-info"><h3 id="inv-stat-unidades">0</h3><p>Unidades en Stock</p></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+            <div class="stat-info"><h3 id="inv-stat-valor-compra">S/ 0.00</h3><p>Valor a Precio Compra</p></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+            <div class="stat-info"><h3 id="inv-stat-valor-venta">S/ 0.00</h3><p>Valor a Precio Venta</p></div>
+          </div>
+        </div>
+
+        <!-- Main inventory table -->
+        <div class="card mb-24">
+          <div class="card-header"><span class="card-title">Existencias de Productos</span></div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Código</th><th>Producto</th><th>Categoría</th><th>Material</th>
+                  <th>Stock Actual</th><th>Stock Mínimo</th><th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="inventory-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Top selling & low rotation -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+          <div class="card">
+            <div class="card-header"><span class="card-title">🏆 Productos Más Vendidos</span></div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead><tr><th>Producto</th><th>Código</th><th>Vendidos</th></tr></thead>
+                <tbody id="inventory-top-selling"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">🐢 Menor Rotación (90 días)</span></div>
+            <div class="table-container">
+              <table class="data-table">
+                <thead><tr><th>Producto</th><th>Código</th><th>Vendidos</th></tr></thead>
+                <tbody id="inventory-low-rotation"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════ CAJA ═══════════ -->
+      <div id="page-caja" class="page">
+        <div class="page-header">
+          <div>
+            <h1>Cuadre de Caja</h1>
+            <p>Control de entradas y salidas de dinero</p>
+          </div>
+          <div class="flex gap-8">
+            <button class="btn btn-danger" id="btn-new-egreso">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Registrar Egreso
+            </button>
+            <button class="btn btn-secondary" id="btn-print-caja">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Imprimir Cuadre
+            </button>
+          </div>
+        </div>
+
+        <!-- Filtros de fecha -->
+        <div class="card mb-16" style="padding: 16px 20px;">
+          <div class="flex items-center gap-16" style="flex-wrap: wrap; align-items: flex-end;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label style="font-size:11px;">Fecha Inicio</label>
+              <input type="date" class="form-control" id="caja-fecha-inicio">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label style="font-size:11px;">Fecha Fin</label>
+              <input type="date" class="form-control" id="caja-fecha-fin">
+            </div>
+            <button class="btn btn-secondary" id="btn-filter-caja">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              Filtrar
+            </button>
+          </div>
+        </div>
+
+        <!-- Resumen cards -->
+        <div class="stats-grid" style="margin-bottom:20px;">
+          <div class="stat-card">
+            <div class="stat-icon green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+            <div class="stat-info"><h3 id="caja-stat-ingresos">S/ 0.00</h3><p>Total Ingresos</p></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></div>
+            <div class="stat-info"><h3 id="caja-stat-egresos">S/ 0.00</h3><p>Total Egresos</p></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+            <div class="stat-info"><h3 id="caja-stat-saldo">S/ 0.00</h3><p>Saldo Neto</p></div>
+          </div>
+        </div>
+
+        <!-- Movements table -->
+        <div class="card">
+          <div class="card-header"><span class="card-title">Movimientos</span></div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Tipo</th><th>Concepto</th><th>Monto</th><th>Usuario</th><th>Fecha</th>
+                </tr>
+              </thead>
+              <tbody id="caja-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -908,6 +1081,10 @@
 
         <!-- Amount -->
         <div id="cash-section">
+          <div class="form-group">
+            <label>Descuento (S/)</label>
+            <input type="number" class="form-control" id="checkout-descuento" min="0" step="0.01" value="0" placeholder="0.00">
+          </div>
           <div class="form-row">
             <div class="form-group">
               <label>Total a pagar</label>
@@ -1110,10 +1287,44 @@
 
   </div><!-- end app-container -->
 
+  <!-- Egreso Modal -->
+  <div class="modal-overlay" id="modal-egreso">
+    <div class="modal" style="max-width: 420px;">
+      <div class="modal-header">
+        <h2>Registrar Egreso</h2>
+        <button class="modal-close" onclick="app.closeModal('modal-egreso')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Concepto *</label>
+          <input type="text" class="form-control" id="egreso-concepto" placeholder="Ej: Pago de servicios, compra de materiales...">
+        </div>
+        <div class="form-group">
+          <label>Monto (S/) *</label>
+          <input type="number" class="form-control" id="egreso-monto" step="0.01" min="0.01" placeholder="0.00">
+        </div>
+        <div class="form-group">
+          <label>Notas (opcional)</label>
+          <textarea class="form-control" id="egreso-notas" rows="2" placeholder="Información adicional..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="app.closeModal('modal-egreso')">Cancelar</button>
+        <button class="btn btn-danger" id="btn-confirm-egreso">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>
+          Registrar Egreso
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container (fuera del app-container para mostrarse siempre) -->
   <div class="toast-container" id="toast-container"></div>
 
   <script src="../node_modules/jsbarcode/dist/JsBarcode.all.min.js"></script>
+  <script src="./js/utils.js"></script>
   <script src="./js/app.js"></script>
 </body>
 </html>

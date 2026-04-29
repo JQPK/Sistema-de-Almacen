@@ -77,17 +77,47 @@ app.whenReady().then(async () => {
       let errors = 0;
 
       for (const record of records) {
+        // Validar campos obligatorios
         if (!record.nombre || !record.precio_venta) {
           errors++;
           continue;
         }
+
         try {
+          // Resolver categoria_id
+          let categoria_id = null;
+          if (record.categoria && record.categoria.trim()) {
+            const nombreCat = record.categoria.trim();
+            let cat = db.getCategoryByName(nombreCat);
+            if (!cat) {
+              const created = db.createCategory(nombreCat);
+              categoria_id = created.id;
+            } else {
+              categoria_id = cat.id;
+            }
+          }
+
+          // Resolver material_id
+          let material_id = null;
+          if (record.material && record.material.trim()) {
+            const nombreMat = record.material.trim();
+            let mat = db.getMaterialByName(nombreMat);
+            if (!mat) {
+              const created = db.createMaterial(nombreMat);
+              material_id = created.id;
+            } else {
+              material_id = mat.id;
+            }
+          }
+
           db.createProduct({
-            codigo: record.codigo || null,
             nombre: record.nombre,
             descripcion: record.descripcion || '',
+            categoria_id,
+            material_id,
+            peso_gramos: parseFloat(record.peso_gramos) || 0,
             precio_compra: parseFloat(record.precio_compra) || 0,
-            precio_venta: parseFloat(record.precio_venta) || 0,
+            precio_venta: parseFloat(record.precio_venta),
             stock_actual: parseInt(record.stock_actual) || 0,
             stock_minimo: parseInt(record.stock_minimo) || 1
           });
@@ -120,7 +150,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('ventas:getById', (_, id) => db.getSaleById(id));
   ipcMain.handle('ventas:void', (_, id, motivo) => db.voidSale(id, motivo));
   ipcMain.handle('ventas:getStats', (_, period) => db.getSalesStats(period));
-  ipcMain.handle('ventas:getDailyStats', () => db.getDailyStats());
+  ipcMain.handle('ventas:getDailyStats', (_, fechaInicio, fechaFin) => db.getDailyStats(fechaInicio, fechaFin));
 
   // ── Clientes ──
   ipcMain.handle('clientes:getAll', () => db.getClients());
@@ -148,6 +178,17 @@ app.whenReady().then(async () => {
 
   // ── Comprobantes ──
   ipcMain.handle('comprobantes:getNextNumber', (_, tipo) => db.getNextReceiptNumber(tipo));
+
+  // ── Inventario ──
+  ipcMain.handle('inventario:getProducts', () => db.getInventoryProducts());
+  ipcMain.handle('inventario:getTopSelling', (_, limit, fi, ff) => db.getTopSellingProducts(limit, fi, ff));
+  ipcMain.handle('inventario:getLowRotation', (_, limit, days) => db.getLowRotationProducts(limit, days));
+  ipcMain.handle('inventario:getStats', () => db.getInventoryStats());
+
+  // ── Caja ──
+  ipcMain.handle('caja:create', (_, data) => db.createMovimientoCaja(data));
+  ipcMain.handle('caja:getAll', (_, filters) => db.getMovimientosCaja(filters));
+  ipcMain.handle('caja:getResumen', (_, fi, ff) => db.getCajaResumen(fi, ff));
 
   // ── Backup ──
   ipcMain.handle('backup:create', async () => {

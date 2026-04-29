@@ -3,6 +3,9 @@
    Main application logic for all modules
    ═══════════════════════════════════════════════════════════════ */
 
+// Páginas restringidas para el rol cajero (solo admin puede acceder)
+const RESTRICTED_PAGES_CAJERO = ['productos', 'configuracion', 'inventario', 'caja'];
+
 const app = {
   cart: [],
   currentPaymentMethod: 'efectivo',
@@ -10,6 +13,7 @@ const app = {
   config: null,
   selectedProductIds: new Set(),
   currentUser: null,
+  chartInstances: {},
 
   // ── Initialize ─────────────────────────
   async init() {
@@ -86,8 +90,18 @@ const app = {
     // Role-based UI logic
     if (this.currentUser.rol !== 'admin') {
       document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+      // Ocultar botones de navegación de páginas restringidas para cajero
+      RESTRICTED_PAGES_CAJERO.forEach(page => {
+        const navBtn = document.querySelector(`.nav-item[data-page="${page}"]`);
+        if (navBtn) navBtn.style.display = 'none';
+      });
     } else {
       document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'flex');
+      // Mostrar todos los botones de navegación para admin
+      RESTRICTED_PAGES_CAJERO.forEach(page => {
+        const navBtn = document.querySelector(`.nav-item[data-page="${page}"]`);
+        if (navBtn) navBtn.style.display = '';
+      });
     }
 
     // Setup rest of app
@@ -101,6 +115,8 @@ const app = {
     this.setupClientes();
     this.setupReportes();
     this.setupUsuarios();
+    this.setupInventario();
+    this.setupCaja();
     
     window.api.actividad.log(this.currentUser.id, 'login', 'Inició sesión en el sistema');
   },
@@ -226,6 +242,11 @@ const app = {
   },
 
   navigateTo(page) {
+    // Guardia de acceso: redirigir a dashboard si cajero intenta acceder a página restringida
+    if (this.currentUser && this.currentUser.rol !== 'admin' && RESTRICTED_PAGES_CAJERO.includes(page)) {
+      page = 'dashboard';
+    }
+
     // Update nav
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     const navBtn = document.querySelector(`.nav-item[data-page="${page}"]`);
@@ -246,6 +267,8 @@ const app = {
     if (page === 'reportes') this.loadReportes();
     if (page === 'usuarios') this.loadUsuarios();
     if (page === 'bitacora') this.loadBitacora();
+    if (page === 'inventario') this.loadInventario();
+    if (page === 'caja') this.loadCaja();
   },
 
   // ═══════════════════════════════════════
@@ -445,7 +468,7 @@ const app = {
       }
     });
     document.getElementById('btn-template-csv').addEventListener('click', () => {
-      const csv = 'codigo,nombre,descripcion,precio_compra,precio_venta,stock_actual,stock_minimo\n1001,Anillo Oro 18k,Anillo con diseño elegante,500.00,800.00,10,2\n';
+      const csv = 'nombre,descripcion,categoria,material,peso_gramos,precio_compra,precio_venta,stock_actual,stock_minimo\nAnillo Oro 18k,Anillo con diseño elegante,Anillos,Oro 18k,3.5,500.00,800.00,10,2\n';
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -964,12 +987,12 @@ const app = {
   // ═══════════════════════════════════════
   setupCheckout() {
     document.getElementById('checkout-received').addEventListener('input', () => this.updateChange());
+    document.getElementById('checkout-descuento').addEventListener('input', () => this.updateCheckoutTotal());
     document.getElementById('btn-confirm-sale').addEventListener('click', () => this.confirmSale());
   },
 
   openCheckoutModal() {
-    const total = this.getCartTotal();
-    document.getElementById('checkout-total').value = this.formatMoney(total);
+    document.getElementById('checkout-descuento').value = '0';
     document.getElementById('checkout-received').value = '';
     document.getElementById('checkout-change').value = this.formatMoney(0);
     document.getElementById('checkout-cliente-select').value = '';
@@ -992,6 +1015,9 @@ const app = {
     document.getElementById('checkout-received').parentElement.style.display = 'block';
     document.getElementById('checkout-change').parentElement.style.display = 'block';
 
+    // Show correct total (with discount reset to 0)
+    this.updateCheckoutTotal();
+
     this.openModal('modal-checkout');
   },
 
@@ -1013,7 +1039,8 @@ const app = {
     } else {
       receivedContainer.style.display = 'none';
       changeContainer.style.display = 'none';
-      document.getElementById('checkout-received').value = this.getCartTotal();
+      const descuento = parseFloat(document.getElementById('checkout-descuento').value) || 0;
+      document.getElementById('checkout-received').value = calcTotalWithDiscount(this.getCartTotal(), descuento);
       this.updateChange();
     }
   },
@@ -1034,17 +1061,35 @@ const app = {
     });
   },
 
+  updateCheckoutTotal() {
+    const subtotal = this.getCartTotal();
+    const descuento = parseFloat(document.getElementById('checkout-descuento').value) || 0;
+    const total = calcTotalWithDiscount(subtotal, descuento);
+    document.getElementById('checkout-total').value = this.formatMoney(total);
+    this.updateChange();
+  },
+
   updateChange() {
-    const total = this.getCartTotal();
+    const subtotal = this.getCartTotal();
+    const descuento = parseFloat(document.getElementById('checkout-descuento').value) || 0;
+    const total = calcTotalWithDiscount(subtotal, descuento);
     const received = parseFloat(document.getElementById('checkout-received').value) || 0;
     const change = Math.max(received - total, 0);
     document.getElementById('checkout-change').value = this.formatMoney(change);
   },
 
   async confirmSale() {
-    const total = this.getCartTotal();
     const subtotal = this.getCartSubtotal();
-    const discount = subtotal - total;
+    const cartTotal = this.getCartTotal(); // total after item-level discounts
+    const descuento = parseFloat(document.getElementById('checkout-descuento').value) || 0;
+
+    // Validate monetary discount
+    const discountValidation = validateDiscount(descuento, cartTotal);
+    if (!discountValidation.valid) {
+      return this.toast(discountValidation.error, 'error');
+    }
+
+    const total = calcTotalWithDiscount(cartTotal, descuento);
 
     const received = parseFloat(document.getElementById('checkout-received').value) || 0;
     if (this.currentPaymentMethod === 'efectivo' && received < total) {
@@ -1058,7 +1103,7 @@ const app = {
       tipo_comprobante: this.currentDocType,
       cliente_id: clienteId,
       subtotal: subtotal,
-      descuento: discount,
+      descuento: descuento,
       total: total,
       metodo_pago: this.currentPaymentMethod,
       monto_pagado: this.currentPaymentMethod === 'efectivo' ? received : total,
@@ -1072,6 +1117,8 @@ const app = {
         subtotal_item: item.subtotal_item,
       })),
     };
+
+    saleData.usuario_id = this.currentUser.id;
 
     try {
       const result = await window.api.ventas.create(saleData);
@@ -1157,7 +1204,7 @@ const app = {
     const tbody = document.getElementById('comprobantes-tbody');
 
     if (sales.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state"><p>No se encontraron comprobantes</p></div></td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state"><p>No se encontraron comprobantes</p></div></td></tr>`;
       return;
     }
 
@@ -1173,6 +1220,7 @@ const app = {
           <td><span class="badge ${tipoBadge}">${tipoLabel}</span></td>
           <td>${this.formatDateTime(s.fecha)}</td>
           <td>${s.cliente_nombre || 'Público general'}</td>
+          <td>${s.vendedor_nombre || 'Sin registro'}</td>
           <td class="fw-700 text-gold">${this.formatMoney(s.total)}</td>
           <td>${metodoPago}</td>
           <td><span class="badge ${estadoBadge}">${s.estado === 'completada' ? 'Completada' : 'Anulada'}</span></td>
@@ -1522,9 +1570,34 @@ const app = {
   },
 
   // ═══════════════════════════════════════
-  //  REPORTES
+  //  CHART MANAGEMENT
+  // ═══════════════════════════════════════
+  _renderChart(key, canvasId, config) {
+    if (this.chartInstances[key]) {
+      this.chartInstances[key].destroy();
+    }
+    const canvas = document.getElementById(canvasId);
+    const instance = new Chart(canvas, config);
+    this.chartInstances[key] = instance;
+    return instance;
+  },
+
   // ═══════════════════════════════════════
   setupReportes() {
+    // Conectar botón de filtro de fechas
+    document.getElementById('btn-filter-reports').addEventListener('click', () => {
+      const fechaInicio = document.getElementById('report-fecha-inicio').value;
+      const fechaFin = document.getElementById('report-fecha-fin').value;
+
+      const validation = validateDateRange(fechaInicio, fechaFin);
+      if (!validation.valid) {
+        this.toast(validation.error, 'error');
+        return;
+      }
+
+      this.loadReportes({ fechaInicio, fechaFin });
+    });
+
     document.getElementById('btn-export-reports').addEventListener('click', async () => {
       const sales = await window.api.ventas.getAll({ limit: false });
       if (!sales || sales.length === 0) {
@@ -1535,7 +1608,7 @@ const app = {
       const headers = [
         'Nro. Comprobante', 'Tipo', 'Fecha', 'Cliente', 'DNI/RUC',
         'Subtotal', 'Descuento', 'Total', 'Método de Pago',
-        'Monto Pagado', 'Cambio', 'Estado', 'Notas'
+        'Monto Pagado', 'Cambio', 'Estado', 'Vendedor', 'Notas'
       ];
 
       const rows = sales.map(s => [
@@ -1551,6 +1624,7 @@ const app = {
         (s.monto_pagado || 0).toFixed(2),
         (s.cambio || 0).toFixed(2),
         s.estado || '',
+        s.vendedor_nombre || 'Sin registro',
         (s.notas || '').replace(/"/g, '""')
       ]);
 
@@ -1569,25 +1643,60 @@ const app = {
     });
   },
 
-  async loadReportes() {
-    const dailyStats = await window.api.ventas.getDailyStats();
+  async loadReportes(filters = null) {
+    // Calcular rango de fechas: usar filtros si se pasan, o últimos 7 días por defecto
+    let fechaInicio, fechaFin;
+
+    if (filters && filters.fechaInicio && filters.fechaFin) {
+      fechaInicio = filters.fechaInicio;
+      fechaFin = filters.fechaFin;
+    } else {
+      const hoy = new Date();
+      const hace7 = new Date();
+      hace7.setDate(hoy.getDate() - 6);
+      fechaInicio = hace7.toISOString().split('T')[0];
+      fechaFin = hoy.toISOString().split('T')[0];
+    }
+
+    // Validar rango antes de consultar
+    const validation = validateDateRange(fechaInicio, fechaFin);
+    if (!validation.valid) {
+      this.toast(validation.error, 'error');
+      return;
+    }
+
+    // Actualizar label con el rango activo
+    const labelEl = document.getElementById('report-date-range-label');
+    if (labelEl) {
+      const fmt = (iso) => {
+        const [y, m, d] = iso.split('-');
+        return `${d}/${m}/${y}`;
+      };
+      labelEl.textContent = `${fmt(fechaInicio)} — ${fmt(fechaFin)}`;
+    }
+
+    const dailyStats = await window.api.ventas.getDailyStats(fechaInicio, fechaFin);
     
-    // Ventas
+    // Construir array de días en el rango seleccionado
     const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
+    const startDate = new Date(fechaInicio + 'T00:00:00');
+    const endDate = new Date(fechaFin + 'T00:00:00');
+    const diffMs = endDate - startDate;
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    for (let i = 0; i <= diffDays; i++) {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
       const key = d.toISOString().split('T')[0];
       const found = (dailyStats || []).find(x => x.dia === key);
       days.push({
-        label: d.toLocaleDateString('es-PE', { weekday: 'short' }),
+        label: d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit' }),
         total: found ? found.total : 0,
         count: found ? found.num_ventas : 0
       });
     }
 
-    if (window.chartReportVentas) window.chartReportVentas.destroy();
-    window.chartReportVentas = new Chart(document.getElementById('chart-report-ventas'), {
+    this._renderChart('reportVentas', 'chart-report-ventas', {
       type: 'line',
       data: {
         labels: days.map(d => d.label),
@@ -1598,6 +1707,20 @@ const app = {
           backgroundColor: 'rgba(201, 169, 110, 0.2)',
           fill: true,
           tension: 0.3
+        }]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+
+    this._renderChart('reportTransacciones', 'chart-report-transacciones', {
+      type: 'bar',
+      data: {
+        labels: days.map(d => d.label),
+        datasets: [{
+          label: 'Transacciones',
+          data: days.map(d => d.count),
+          backgroundColor: '#8B6F47',
+          borderRadius: 4
         }]
       },
       options: { responsive: true, maintainAspectRatio: false }
@@ -1729,6 +1852,217 @@ const app = {
         <td class="text-muted" style="font-size:13px;">${b.detalles || '-'}</td>
       </tr>
     `).join('');
+  },
+
+  // ═══════════════════════════════════════
+  //  INVENTARIO
+  // ═══════════════════════════════════════
+  setupInventario() {
+    document.getElementById('btn-print-inventory').addEventListener('click', () => this.printInventory());
+  },
+
+  async loadInventario() {
+    // Stats
+    const stats = await window.api.inventario.getStats();
+    document.getElementById('inv-stat-productos').textContent = stats.total_productos || 0;
+    document.getElementById('inv-stat-unidades').textContent = stats.total_unidades || 0;
+    document.getElementById('inv-stat-valor-compra').textContent = this.formatMoney(stats.valor_compra || 0);
+    document.getElementById('inv-stat-valor-venta').textContent = this.formatMoney(stats.valor_venta || 0);
+
+    // Main table
+    const products = await window.api.inventario.getProducts();
+    const tbody = document.getElementById('inventory-tbody');
+    if (products.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><p>No hay productos</p></div></td></tr>';
+    } else {
+      tbody.innerHTML = products.map(p => {
+        const isLow = p.stock_actual <= p.stock_minimo;
+        const rowClass = isLow ? 'style="background:rgba(239,68,68,0.05);"' : '';
+        const estadoBadge = isLow
+          ? '<span class="badge badge-danger">⚠ Stock Bajo</span>'
+          : '<span class="badge badge-success">OK</span>';
+        return `<tr ${rowClass}>
+          <td class="font-mono text-muted">${p.codigo || '-'}</td>
+          <td class="fw-600">${p.nombre}</td>
+          <td>${p.categoria_nombre || '-'}</td>
+          <td>${p.material_nombre || '-'}</td>
+          <td class="${isLow ? 'stock-low fw-700' : 'stock-ok'}">${p.stock_actual}</td>
+          <td>${p.stock_minimo}</td>
+          <td>${estadoBadge}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // Top selling
+    const topSelling = await window.api.inventario.getTopSelling(10);
+    const topTbody = document.getElementById('inventory-top-selling');
+    topTbody.innerHTML = topSelling.length === 0
+      ? '<tr><td colspan="3"><div class="empty-state"><p>Sin datos</p></div></td></tr>'
+      : topSelling.map((p, i) => `<tr>
+          <td>${i + 1}. ${p.nombre}</td>
+          <td class="font-mono text-muted">${p.codigo || '-'}</td>
+          <td class="fw-700 text-gold">${p.total_vendido}</td>
+        </tr>`).join('');
+
+    // Low rotation
+    const lowRotation = await window.api.inventario.getLowRotation(10, 90);
+    const lowTbody = document.getElementById('inventory-low-rotation');
+    lowTbody.innerHTML = lowRotation.length === 0
+      ? '<tr><td colspan="3"><div class="empty-state"><p>Sin datos</p></div></td></tr>'
+      : lowRotation.map(p => `<tr>
+          <td>${p.nombre}</td>
+          <td class="font-mono text-muted">${p.codigo || '-'}</td>
+          <td class="text-muted">${p.total_vendido}</td>
+        </tr>`).join('');
+  },
+
+  printInventory() {
+    const statsHtml = document.getElementById('inventory-stats').outerHTML;
+    const tableHtml = document.querySelector('#page-inventario .table-container').outerHTML;
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    const config = this.config || {};
+    printWindow.document.write(`
+      <!DOCTYPE html><html><head><title>Inventario — ${config.nombre_empresa || 'Joyería Mariné'}</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; }
+        h1 { font-size: 18px; margin-bottom: 4px; }
+        p { color: #666; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+        th { background: #f5f5f5; font-weight: bold; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+        .stat-card { border: 1px solid #ddd; border-radius: 6px; padding: 12px; }
+        .stat-card h3 { font-size: 18px; margin: 0 0 4px; }
+        .stat-card p { font-size: 11px; color: #666; margin: 0; }
+        @media print { body { margin: 10px; } }
+      </style></head><body>
+      <h1>Inventario — ${config.nombre_empresa || 'Joyería Mariné'}</h1>
+      <p>Generado el ${new Date().toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' })}</p>
+      ${statsHtml}
+      ${tableHtml}
+      <script>setTimeout(()=>{window.print();window.close();},500)<\/script>
+      </body></html>
+    `);
+    printWindow.document.close();
+  },
+
+  // ═══════════════════════════════════════
+  //  CAJA
+  // ═══════════════════════════════════════
+
+  setupCaja() {
+    document.getElementById('btn-new-egreso').addEventListener('click', () => {
+      document.getElementById('egreso-concepto').value = '';
+      document.getElementById('egreso-monto').value = '';
+      document.getElementById('egreso-notas').value = '';
+      this.openModal('modal-egreso');
+    });
+
+    document.getElementById('btn-confirm-egreso').addEventListener('click', () => this.saveEgreso());
+    document.getElementById('btn-filter-caja').addEventListener('click', () => this.loadCaja());
+    document.getElementById('btn-print-caja').addEventListener('click', () => this.printCuadre());
+  },
+
+  async loadCaja(filters = null) {
+    // Default: today
+    const today = new Date().toISOString().split('T')[0];
+    let fechaInicio = document.getElementById('caja-fecha-inicio').value || today;
+    let fechaFin = document.getElementById('caja-fecha-fin').value || today;
+
+    if (!document.getElementById('caja-fecha-inicio').value) {
+      document.getElementById('caja-fecha-inicio').value = today;
+      document.getElementById('caja-fecha-fin').value = today;
+    }
+
+    // Resumen
+    const resumen = await window.api.caja.getResumen(fechaInicio, fechaFin);
+    document.getElementById('caja-stat-ingresos').textContent = this.formatMoney(resumen.total_ingresos || 0);
+    document.getElementById('caja-stat-egresos').textContent = this.formatMoney(resumen.total_egresos || 0);
+    const saldo = resumen.saldo_neto || 0;
+    const saldoEl = document.getElementById('caja-stat-saldo');
+    saldoEl.textContent = this.formatMoney(saldo);
+    saldoEl.style.color = saldo >= 0 ? 'var(--success)' : 'var(--danger)';
+
+    // Movimientos
+    const movimientos = await window.api.caja.getAll({ fecha_inicio: fechaInicio, fecha_fin: fechaFin });
+    const tbody = document.getElementById('caja-tbody');
+    if (movimientos.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><p>No hay movimientos en este período</p></div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = movimientos.map(m => {
+      const isIngreso = m.tipo === 'ingreso';
+      const tipoBadge = isIngreso
+        ? '<span class="badge badge-success">Ingreso</span>'
+        : '<span class="badge badge-danger">Egreso</span>';
+      const montoClass = isIngreso ? 'fw-700 text-success' : 'fw-700 text-danger';
+      const montoPrefix = isIngreso ? '+' : '-';
+      return `<tr>
+        <td>${tipoBadge}</td>
+        <td>${m.concepto}</td>
+        <td class="${montoClass}">${montoPrefix} ${this.formatMoney(m.monto)}</td>
+        <td>${m.usuario_nombre || '-'}</td>
+        <td class="text-muted" style="font-size:12px;">${this.formatDateTime(m.fecha)}</td>
+      </tr>`;
+    }).join('');
+  },
+
+  async saveEgreso() {
+    const concepto = document.getElementById('egreso-concepto').value.trim();
+    const monto = parseFloat(document.getElementById('egreso-monto').value);
+    const notas = document.getElementById('egreso-notas').value.trim();
+
+    if (!concepto) return this.toast('El concepto es obligatorio', 'error');
+
+    const validation = validateEgreso(monto);
+    if (!validation.valid) return this.toast(validation.error, 'error');
+
+    try {
+      await window.api.caja.create({
+        tipo: 'egreso',
+        concepto,
+        monto,
+        notas,
+        usuario_id: this.currentUser.id,
+      });
+      this.toast('Egreso registrado correctamente', 'success');
+      this.closeModal('modal-egreso');
+      this.loadCaja();
+    } catch (e) {
+      this.toast('Error al registrar egreso: ' + e.message, 'error');
+    }
+  },
+
+  printCuadre() {
+    const resumenHtml = document.querySelector('#page-caja .stats-grid').outerHTML;
+    const tableHtml = document.querySelector('#page-caja .table-container').outerHTML;
+    const fechaInicio = document.getElementById('caja-fecha-inicio').value;
+    const fechaFin = document.getElementById('caja-fecha-fin').value;
+    const config = this.config || {};
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    printWindow.document.write(`
+      <!DOCTYPE html><html><head><title>Cuadre de Caja</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; }
+        h1 { font-size: 18px; margin-bottom: 4px; }
+        p { color: #666; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+        th { background: #f5f5f5; font-weight: bold; }
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+        .stat-card { border: 1px solid #ddd; border-radius: 6px; padding: 12px; }
+        .stat-card h3 { font-size: 18px; margin: 0 0 4px; }
+        .stat-card p { font-size: 11px; color: #666; margin: 0; }
+        @media print { body { margin: 10px; } }
+      </style></head><body>
+      <h1>Cuadre de Caja — ${config.nombre_empresa || 'Joyería Mariné'}</h1>
+      <p>Período: ${fechaInicio} al ${fechaFin} — Generado el ${new Date().toLocaleDateString('es-PE')}</p>
+      ${resumenHtml}
+      ${tableHtml}
+      <script>setTimeout(()=>{window.print();window.close();},500)<\/script>
+      </body></html>
+    `);
+    printWindow.document.close();
   }
 };
 
